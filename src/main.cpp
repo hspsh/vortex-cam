@@ -24,6 +24,7 @@ extern "C"
 #include <Adafruit_NeoPixel.h>
 
 #include "config.h"
+const char* hostname = "vortex-cam-1";
 
 // ledPin refers to ESP32-CAM GPIO 4 (flashlight)
 #define FLASH_GPIO_NUM 4
@@ -164,6 +165,7 @@ void setup()
   }
 
   // Wi-Fi connection
+  WiFi.setHostname(hostname);
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED)
   {
@@ -244,7 +246,7 @@ void setup()
   }
 
   homie.strFriendlyName = "Vortex Cam";
-  homie.strID = "vortex-cam-1";
+  homie.strID = hostname;
   homie.strID.toLowerCase();
 
   homie.strMqttServerIP = mqttHost;
