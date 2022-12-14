@@ -23,15 +23,22 @@ extern "C"
 
 #include <Adafruit_NeoPixel.h>
 
+#include <ArduinoOTA.h>
+
+
 #include "config.h"
-const char* hostname = "vortex-cam-1";
+#include "secrets.h"
+#include "commonFwUtils.h"
+
+const char* hostname = "vortex-cam-0";
 
 // ledPin refers to ESP32-CAM GPIO 4 (flashlight)
-#define FLASH_GPIO_NUM 4
+// Setting 0 disables this function
+#define FLASH_GPIO_NUM 0
 #define RGBLED_GPIO_NUM 2
-#define RGBLED_COUNT 5
+#define RGBLED_COUNT 24
 
-bool isFlashOn = false;
+bool gIsFlashOn = false;
 
 // Create AsyncWebServer object on port 80
 AsyncWebServer server(80);
@@ -44,7 +51,7 @@ HomieProperty *pPropTray = NULL;
 
 void flashOn()
 {
-  isFlashOn = true;
+  gIsFlashOn = true;
   digitalWrite(FLASH_GPIO_NUM, HIGH);
   for (int i = 0; i < RGBLED_COUNT; i++)
   {
@@ -55,7 +62,7 @@ void flashOn()
 
 void flashOff()
 {
-  isFlashOn = true;
+  gIsFlashOn = false;
   digitalWrite(FLASH_GPIO_NUM, LOW);
   for (int i = 0; i < RGBLED_COUNT; i++)
   {
@@ -80,32 +87,29 @@ String processor(const String &var)
 void startCameraServer()
 {
   server.on("/capture", HTTP_GET, [](AsyncWebServerRequest *request)
-            {
-              esp_err_t res = ESP_OK;
-              flashOn();
-              esp_camera_fb_return(fb);
-              fb = NULL;
-              delay(100);
-              fb = esp_camera_fb_get();
-              flashOff();
-              if (!fb)
-              {
-                Serial.println("Camera capture failed");
-                res = ESP_FAIL;
-                request->send(500);
-              }
-              else
-              {
-                Serial.println("Camera capture success");
-                _jpg_buf_len = fb->len;
-                _jpg_buf = fb->buf;
-              }
-              request->send_P(200, "image/jpg", _jpg_buf, _jpg_buf_len);
-              Serial.print("Sent packet of length ");
-              Serial.println(_jpg_buf_len);
-            });
+  {
+    esp_err_t res = ESP_OK;
+    flashOn();
+    esp_camera_fb_return(fb);
+    fb = NULL;
+    delay(100);
+    fb = esp_camera_fb_get();
+    flashOff();
 
-  // Start server
+    if (!fb) {
+      Serial.println("Camera capture failed");
+      res = ESP_FAIL;
+      request->send(500);
+    } else {
+      Serial.println("Camera capture success");
+      _jpg_buf_len = fb->len;
+      _jpg_buf = fb->buf;
+    }
+    request->send_P(200, "image/jpg", _jpg_buf, _jpg_buf_len);
+    Serial.print("Sent packet of length ");
+    Serial.println(_jpg_buf_len);
+  });
+
   server.begin();
 }
 
@@ -119,7 +123,7 @@ void setup()
   digitalWrite(4, LOW);
 
   Serial.begin(115200);
-  Serial.setDebugOutput(false);
+  Serial.setDebugOutput(true);
 
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
@@ -143,20 +147,10 @@ void setup()
   config.xclk_freq_hz = 20000000;
   config.pixel_format = PIXFORMAT_JPEG;
 
-  // if (psramFound())
-  // {
-  //   config.frame_size = FRAMESIZE_UXGA;
-  //   config.jpeg_quality = 10;
-  //   config.fb_count = 2;
-  // }
-  // else
-  // {
   config.frame_size = FRAMESIZE_SVGA;
   config.jpeg_quality = 12;
   config.fb_count = 1;
-  // }
 
-  // Camera init
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK)
   {
@@ -166,12 +160,12 @@ void setup()
 
   // Wi-Fi connection
   WiFi.setHostname(hostname);
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED)
-  {
+  WiFi.begin(IOT_WIFI_NAME, IOT_WIFI_PASSWD);
+  while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
+
   Serial.println("");
   Serial.println("WiFi connected");
 
@@ -231,31 +225,21 @@ void setup()
     pProp->SetValue("0");
   }
 
-  {
-    // HomieNode *pRes = homie.NewNode();
-    // HomieProperty *pProp;
-
-    // pRes->strID = "resources";
-    // pRes->strFriendlyName = "Resources";
-
-    // pRes->NewProperty();
-    // pProp->strFriendlyName = "Photo from Camera";
-    // pProp->strID = "photo";
-    // pProp->datatype=homieString;
-    // pProp->SetValue("photo");
-  }
-
   homie.strFriendlyName = "Vortex Cam";
   homie.strID = hostname;
   homie.strID.toLowerCase();
 
-  homie.strMqttServerIP = mqttHost;
+  homie.strMqttServerIP = "192.168.88.20";
+	homie.strMqttUserName = MQTT_USERNAME;
+	homie.strMqttPassword = MQTT_PASSWD;
   homie.Init();
   pixels.begin();
-  for (int i = 0; i < RGBLED_COUNT; i++)
-  {
+  for (int i = 0; i < RGBLED_COUNT; i++) {
     pixels.setPixelColor(i, pixels.Color(0, 100, 20));
   }
+
+  begin_hspota();
+
   pixels.show();
   startCameraServer();
 }
@@ -274,18 +258,44 @@ uint32_t Wheel(byte WheelPos) {
   }
 }
 
+uint32_t redWheel(byte WheelPos) {
+  if (WheelPos < 85) {
+    return pixels.Color(WheelPos * 3, 0, 0);
+  } else if (WheelPos < 170) {
+    WheelPos -= 85;
+    return pixels.Color(255 - WheelPos * 3, 0, 0);
+  } else {
+    WheelPos -= 170;
+    return pixels.Color(0, 0, 0);
+  }
+}
+
+
 byte pos = 0;
 int i;
 
 void loop()
 {
   homie.Loop();
+  ArduinoOTA.handle();
+
   if (homie.IsConnected())
   {
-    for (i = 0; i < pixels.numPixels(); i++) {
+    if (!gIsFlashOn){
+      for (i = 0; i < pixels.numPixels(); i++) {
       pixels.setPixelColor(i, Wheel(((i * 256 / 40) + pos) & 255));
+      }
+      pixels.show();
     }
-    pixels.show();
+    pos++;
+    if (pos == 255) pos = 0;
+  } else {
+    if (!gIsFlashOn){
+      for (i = 0; i < pixels.numPixels(); i++) {
+      pixels.setPixelColor(i, redWheel(((i * 256 / 40) + pos) & 255));
+      }
+      pixels.show();
+    }
     pos++;
     if (pos == 255) pos = 0;
   }
