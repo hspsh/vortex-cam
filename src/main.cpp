@@ -30,7 +30,6 @@ extern "C"
 #include "secrets.h"
 #include "commonFwUtils.h"
 
-const char* hostname = "vortex-cam-0";
 
 // ledPin refers to ESP32-CAM GPIO 4 (flashlight)
 // Setting 0 disables this function
@@ -170,7 +169,8 @@ void setup()
   Serial.println("WiFi connected");
 
   Serial.print("Camera Stream Ready! Go to: http://");
-  Serial.println(WiFi.localIP());
+  Serial.print(WiFi.localIP());
+  Serial.println("/capture");
 
   HomieLibRegisterDebugPrintCallback([](const char *szText)
                                      { Serial.printf("%s", szText); });
@@ -225,9 +225,18 @@ void setup()
     pProp->SetValue("0");
   }
 
-  homie.strFriendlyName = "Vortex Cam";
+  homie.strFriendlyName = friendlyName;
   homie.strID = hostname;
   homie.strID.toLowerCase();
+
+  IPAddress mqttServerIp((uint32_t)0);
+  if(!WiFiGenericClass::hostByName(mqttHost, mqttServerIp)){
+    Serial.printf("Couldn't fetch IP by hostname: %s !",mqttHost);
+    mqttServerIp.fromString(fallbackMqttIp);
+  }
+  homie.strMqttServerIP = mqttServerIp.toString();
+
+  Serial.printf("MQTT server IP: %s",homie.strMqttServerIP.c_str());
 
   homie.strMqttServerIP = "192.168.88.20";
 	homie.strMqttUserName = MQTT_USERNAME;
