@@ -37,7 +37,10 @@ extern "C"
 #define RGBLED_GPIO_NUM 2
 #define RGBLED_COUNT 24
 
+#define _ENABLE_FLASH
+
 bool gIsFlashOn = false;
+bool gIsWarning = false;
 
 // Create AsyncWebServer object on port 80
 AsyncWebServer server(80);
@@ -88,12 +91,18 @@ void startCameraServer()
   server.on("/capture", HTTP_GET, [](AsyncWebServerRequest *request)
   {
     esp_err_t res = ESP_OK;
+
+    #ifdef ENABLE_FLASH
     flashOn();
+    #endif
     esp_camera_fb_return(fb);
     fb = NULL;
     delay(100);
     fb = esp_camera_fb_get();
+
+    #ifdef ENABLE_FLASH
     flashOff();
+    #endif
 
     if (!fb) {
       Serial.println("Camera capture failed");
@@ -201,20 +210,20 @@ void setup()
       digitalWrite(16, strcmp(pSource->GetValue().c_str(), "true") == 0 ? HIGH : LOW); });
 
     pProp = pNode->NewProperty();
-    pProp->strFriendlyName = "Flash LED";
-    pProp->strID = "flash";
+    pProp->strFriendlyName = "Status";
+    pProp->strID = "status";
     pProp->SetRetained(true);
     pProp->SetSettable(true);
-    pProp->datatype = homieBool;
-    pProp->SetBool(false);
+    pProp->datatype = homieString;
     pProp->strFormat = "";
     pProp->AddCallback([](HomieProperty *pSource)
                        {
 			//this property is settable. We'll print it into the console whenever it's updated.
 			//you can set it from MQTT Explorer by publishing a number between 0-100 to homie/examplehomiedev/nodeid1/dimmer
 			//but remember to check the *retain* box.
-			Serial.printf("%s is now %s\n",pSource->strFriendlyName.c_str(),pSource->GetValue().c_str()); 
-      digitalWrite(4, strcmp(pSource->GetValue().c_str(), "true") == 0 ? HIGH : LOW); });
+			// Serial.printf("%s is now %s\n",pSource->strFriendlyName.c_str(),pSource->GetValue().c_str()); 
+      gIsWarning = strcmp(pSource->GetValue().c_str(), "warning") == 0; 
+    });
 
     pPropTray = pProp = pNode->NewProperty();
     pProp->strFriendlyName = "Tray detected";
@@ -238,7 +247,7 @@ void setup()
 
   Serial.printf("MQTT server IP: %s",homie.strMqttServerIP.c_str());
 
-  homie.strMqttServerIP = "192.168.88.20";
+  // homie.strMqttServerIP = fallbackMqttIp;
 	homie.strMqttUserName = MQTT_USERNAME;
 	homie.strMqttPassword = MQTT_PASSWD;
   homie.Init();
@@ -279,6 +288,18 @@ uint32_t redWheel(byte WheelPos) {
   }
 }
 
+uint32_t warningWheel(byte WheelPos) {
+  if (WheelPos < 85) {
+    return pixels.Color(WheelPos * 3, WheelPos * 3, 0);
+  } else if (WheelPos < 170) {
+    WheelPos -= 85;
+    return pixels.Color(255 - WheelPos * 3, 255 - WheelPos * 3, 0);
+  } else {
+    WheelPos -= 170;
+    return pixels.Color(0, 0, 0);
+  }
+}
+
 
 byte pos = 0;
 int i;
@@ -290,18 +311,25 @@ void loop()
 
   if (homie.IsConnected())
   {
-    if (!gIsFlashOn){
+    if (gIsWarning){
       for (i = 0; i < pixels.numPixels(); i++) {
-      pixels.setPixelColor(i, Wheel(((i * 256 / 40) + pos) & 255));
+        pixels.setPixelColor(i, warningWheel(((i * 256 / 40) + pos) & 255));
+      }
+      pixels.show();
+    } else if (!gIsFlashOn){
+      for (i = 0; i < pixels.numPixels(); i++) {
+        pixels.setPixelColor(i, Wheel(((i * 256 / 40) + pos) & 255));
       }
       pixels.show();
     }
+
+
     pos++;
     if (pos == 255) pos = 0;
   } else {
     if (!gIsFlashOn){
       for (i = 0; i < pixels.numPixels(); i++) {
-      pixels.setPixelColor(i, redWheel(((i * 256 / 40) + pos) & 255));
+        pixels.setPixelColor(i, redWheel(((i * 256 / 40) + pos) & 255));
       }
       pixels.show();
     }
